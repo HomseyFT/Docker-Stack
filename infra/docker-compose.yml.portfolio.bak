@@ -1,0 +1,133 @@
+version: "3.9"
+services:
+  portainer:
+    image: portainer/portainer-ce:2.21.5
+    container_name: portainer
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    networks: [proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.portainer.rule=Host(`portainer.${DOMAIN}`)
+      - traefik.http.services.portainer.loadbalancer.server.port=9000
+    restart: unless-stopped
+
+  dozzle:
+    image: amir20/dozzle:v8.5.2
+    container_name: dozzle
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.dozzle.rule=Host(`logs.${DOMAIN}`)
+      - traefik.http.services.dozzle.loadbalancer.server.port=8080
+    restart: unless-stopped
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    volumes:
+      - ./kuma:/app/data
+    networks: [proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.kuma.rule=Host(`kuma.${DOMAIN}`)
+      - traefik.http.services.kuma.loadbalancer.server.port=3001
+    restart: unless-stopped
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    networks: [proxy]
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - /home/nathan1/docker/jellyfin/config:/config
+      # TODO: point these at your NAS mount(s) once configured
+      - /mnt/media/movies:/data/movies
+      - /mnt/media/tv:/data/tv
+    devices:
+      # Expose AMD iGPU; safe even if /dev/dri is absent (container still runs)
+      - /dev/dri:/dev/dri
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.jellyfin.rule=Host(`jellyfin.${DOMAIN}`)
+      - traefik.http.services.jellyfin.loadbalancer.server.port=8096
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    networks: [proxy]
+    volumes:
+      - /home/nathan1/docker/ollama/config:/root/.ollama
+    # Expose API to the host only on localhost:11434 so you can use the CLI on the server
+    ports:
+      - "127.0.0.1:11434:11434"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.ollama.rule=Host(`ollama.${DOMAIN}`)
+      - traefik.http.services.ollama.loadbalancer.server.port=11434
+    restart: unless-stopped
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    networks: [proxy]
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    volumes:
+      - /home/nathan1/docker/openwebui/data:/app/backend/data
+    depends_on:
+      - ollama
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.openwebui.rule=Host(`webui.${DOMAIN}`)
+      - traefik.http.services.openwebui.loadbalancer.server.port=8080
+    restart: unless-stopped
+
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    networks: [proxy]
+    environment:
+      - TZ=Etc/UTC
+      - WEBPASSWORD=nivgatH0m3L4b~
+      - DNSMASQ_LISTENING=all
+    volumes:
+      - /home/nathan1/docker/pihole/config/pihole:/etc/pihole
+      - /home/nathan1/docker/pihole/config/dnsmasq.d:/etc/dnsmasq.d
+    # For now, only expose the web UI via Traefik; we are not binding port 53 on the host yet
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.pihole.rule=Host(`pihole.${DOMAIN}`)
+      - traefik.http.services.pihole.loadbalancer.server.port=80
+    restart: unless-stopped
+
+  proton-vpn:
+    image: qmcgaw/gluetun
+    container_name: proton-vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks: [proxy]
+    environment:
+      - TZ=Etc/UTC
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=${VPN_USER}
+      - OPENVPN_PASSWORD=${VPN_PASSWORD}
+      # Uncomment if you use Proton free tier only
+      # - FREE_ONLY=on
+    volumes:
+      - /home/nathan1/docker/gluetun:/gluetun
+    restart: unless-stopped
+
+networks:
+  proxy:
+    external: true
